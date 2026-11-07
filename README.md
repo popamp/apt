@@ -32,6 +32,7 @@ HestiaCP's nginx and Cloudflare cache `*.gz` for a long time.
 | `bin/build-index` | builds and signs the index; run by CI |
 | `bin/mirror` | mirrors the index and its packages into a web root; for cron |
 | `.github/workflows/index.yml` | the Index workflow |
+| `bin/test-install`, `.github/workflows/test-install.yml` | installs from apt.popamp.app on Debian 12, 13 and Ubuntu 22.04, 24.04, 26.04, amd64 and arm64, daily |
 | `site/` | copied into the web root on every mirror run: the public key, the sources file |
 
 ## Signing key
