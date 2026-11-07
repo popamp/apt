@@ -1,0 +1,67 @@
+name: Index
+
+# Rebuilds the signed apt index from the latest release of every public
+# repository of this owner (popamp, skins, plug-ins) and publishes it in
+# the release "index", which the server mirrors (bin/mirror). A release
+# elsewhere starts it with `gh workflow run index.yml -R popamp/apt`;
+# the daily run catches a start that got lost. Unchanged releases leave
+# the index as it is.
+# Needs the secret APT_SIGNING_KEY: the armored secret key, without a
+# passphrase, whose public part is site/popamp.gpg.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * *"
+
+permissions:
+  contents: write
+
+# One at a time; a start during a run waits for it.
+concurrency:
+  group: index
+
+jobs:
+  index:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends apt-utils xz-utils
+      - name: Import the signing key
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: |
+          if [ -z "$APT_SIGNING_KEY" ]; then
+            echo "::error::the secret APT_SIGNING_KEY is not set" >&2
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
+          key=$(gpg --batch --with-colons --show-keys site/popamp.gpg | awk -F: '/^fpr:/ { print $10; exit }')
+          if ! gpg --batch --list-secret-keys "$key" >/dev/null 2>&1; then
+            echo "::error::APT_SIGNING_KEY is not the key in site/popamp.gpg ($key)" >&2
+            exit 1
+          fi
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "KEY=$key" >> "$GITHUB_ENV"
+      - name: Build the index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bin/build-index "$GITHUB_REPOSITORY_OWNER" out "$KEY"
+      # pool.txt goes up last: it is what the next run compares against,
+      # so a failed upload is repeated rather than skipped.
+      - name: Publish it if the packages changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download index -p pool.txt -O old-pool.txt 2>/dev/null && cmp -s old-pool.txt out/pool.txt; then
+            echo "the packages are unchanged"
+            exit 0
+          fi
+          gh release view index >/dev/null 2>&1 \
+            || gh release create index --title "apt index" --latest=false \
+                 --notes "The signed index of https://apt.popamp.app, rebuilt by the Index workflow. Not a release of anything."
+          gh release upload index out/apt-index.tar.gz --clobber
+          gh release upload index out/pool.txt --clobber

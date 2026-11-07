@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Mirrors Popamp's apt repository into a web root: fetches the index that
+# CI built and signed, checks its signature against the pinned key in
+# site/popamp.gpg, downloads the packages it lists from GitHub, checks
+# each against the signed index, then switches dists/ over. Holds no
+# secret. Meant for cron; a run that changes nothing is quick and quiet,
+# and an interrupted one is simply repeated.
+#
+# Usage: bin/mirror <web root>
+#   Private files (lock, staging, last index) go into <web root>/../private,
+#   which HestiaCP keeps next to every web root and does not serve.
+# Needs: curl, gpgv, tar, sha256sum, flock.
+set -euo pipefail
+
+die() { echo "error: $*" >&2; exit 1; }
+
+[ $# -eq 1 ] || die "usage: $0 <web root>"
+root=$(cd "$(dirname "$0")/.." && pwd)
+pub=$(cd "$1" && pwd)
+state=$(cd "$pub/.." && pwd)/private/apt-mirror
+index_url=${APT_INDEX_URL:-https://github.com/popamp/apt/releases/download/index/apt-index.tar.gz}
+suite=stable
+
+umask 022
+mkdir -p "$state"
+exec 9> "$state/lock"
+flock -n 9 || exit 0
+
+new=$state/new
+rm -rf "$new" "$state/dl"
+mkdir -p "$new" "$state/dl"
+
+# The site files (key, sources file, page) every run: they come from git.
+install -m 644 "$root"/site/* "$pub/"
+
+curl -fsSL --retry 3 -o "$state/index.tar.gz" "$index_url"
+if cmp -s "$state/index.tar.gz" "$state/current.tar.gz" && [ -d "$pub/dists" ]; then
+    exit 0
+fi
+
+# Only dists/ and pool.txt; tar itself refuses absolute and ../ names.
+tar -tzf "$state/index.tar.gz" | grep -qvE '^(dists/.*|pool\.txt)$' && die "unexpected files in the index"
+tar -xzf "$state/index.tar.gz" -C "$new" --no-same-owner --no-same-permissions
+
+# Release is trusted only as gpgv's output, then each index file by its hash.
+dists=$new/dists/$suite
+gpgv --quiet --keyring "$root/site/popamp.gpg" --output "$state/Release" "$dists/InRelease" 2>/dev/null \
+    || die "bad signature on InRelease"
+cmp -s "$state/Release" "$dists/Release" || die "Release differs from the signed InRelease"
+awk '/^SHA256:/ { on = 1; next } /^[^ ]/ { on = 0 } on { print $1 "  " $3 }' "$state/Release" > "$state/index.sums"
+(cd "$dists" && sha256sum --quiet --strict -c "$state/index.sums") || die "index files differ from Release"
+
+# "<sha256> <pool path>" of every package in the signed Packages files.
+awk '/^Filename: / { f = $2 } /^SHA256: / { s = $2 } /^$/ { if (f) print s, f; f = s = "" }
+     END { if (f) print s, f }' "$dists"/main/binary-*/Packages | sort -u > "$state/wanted"
+[ -s "$state/wanted" ] || die "the index lists no packages"
+
+# The URL comes from the unsigned pool.txt, so it only says where to look:
+# the file must still match the signed hash.
+fetch() {
+    local sum=$1 path=$2 url tmp=$state/dl/pkg
+    [[ $path =~ ^pool/main/[a-z0-9]/[a-z0-9.+-]+/[A-Za-z0-9.+~_-]+\.deb$ ]] || die "bad pool path: $path"
+    if [ -f "$pub/$path" ] && [ "$(sha256sum < "$pub/$path" | cut -d' ' -f1)" = "$sum" ]; then
+        return
+    fi
+    url=$(awk -v p="$path" '$2 == p { print $3; exit }' "$new/pool.txt")
+    [[ $url == https://github.com/* ]] || die "$path: no GitHub URL in pool.txt"
+    curl -fsSL --retry 3 -o "$tmp" "$url"
+    [ "$(sha256sum < "$tmp" | cut -d' ' -f1)" = "$sum" ] || die "$path: sha256 differs from the signed index"
+    mkdir -p "$pub/${path%/*}"
+    mv "$tmp" "$pub/$path"
+    echo "added $path"
+}
+while read -r sum path; do
+    fetch "$sum" "$path"
+done < "$state/wanted"
+
+# Every package is in place: switch the index over. Each rename is atomic.
+rm -rf "$state/dists.old"
+[ ! -d "$pub/dists" ] || mv "$pub/dists" "$state/dists.old"
+mv "$new/dists" "$pub/dists"
+
+# Keep the packages of the previous index too, for a client that read it
+# just before the switch; drop the rest.
+touch "$state/current.wanted"
+cut -d' ' -f2 "$state/wanted" "$state/current.wanted" | sort -u > "$state/keep"
+(cd "$pub" && find pool -type f -name '*.deb' 2>/dev/null | sort) | comm -23 - "$state/keep" | while read -r path; do
+    rm -f "$pub/$path"
+    echo "removed $path"
+done
+[ ! -d "$pub/pool" ] || find "$pub/pool" -mindepth 1 -type d -empty -delete
+
+mv "$state/wanted" "$state/current.wanted"
+mv "$state/index.tar.gz" "$state/current.tar.gz"
+rm -rf "$new" "$state/dl" "$state/dists.old"

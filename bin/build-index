@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Builds the signed index of Popamp's apt repository from the .deb files
+# of the latest release of every public repository of a GitHub
+# user or organisation: popamp itself, skins, plug-ins. The packages stay on
+# GitHub; the index lists them under pool/ and pool.txt says where each
+# one is to be downloaded from.
+#
+# Usage: bin/build-index <owner> <out dir> [gpg key id]
+#   Writes <out>/apt-index.tar.gz (dists/ and pool.txt) and <out>/pool.txt.
+#   The key, with its secret part, must be in gpg's keyring; without a key
+#   id, gpg's default key signs.
+# Needs: gh (with GH_TOKEN), jq, curl, sha256sum, dpkg-deb, apt-ftparchive
+# (apt-utils), xz, gpg.
+set -euo pipefail
+
+die() { echo "error: $*" >&2; exit 1; }
+
+[ $# -ge 2 ] || die "usage: $0 <owner> <out dir> [gpg key id]"
+owner=$1
+out=$2
+key=${3:-}
+suite=stable
+archs="amd64 arm64"
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$out" "$work/dl" "$work/repo"
+
+# Public, not archived repositories of the owner (user or organisation).
+owner_repos() {
+    gh api --paginate "users/$owner/repos?type=owner&per_page=100" \
+        --jq '.[] | select(.archived | not) | .name'
+}
+
+# "<url> <sha256 or empty>" for each .deb of the repository's latest
+# release (not a draft, not a pre-release). A repository without
+# releases gives nothing; any other failure stops the build, so a
+# GitHub hiccup cannot drop packages from the index.
+release_debs() {
+    local repo=$1 err=$work/err
+    if ! gh api "repos/$owner/$repo/releases/latest" \
+        --jq '.assets[] | select(.name | endswith(".deb"))
+              | "\(.browser_download_url) \(.digest // "" | ltrimstr("sha256:"))"' 2>"$err"; then
+        grep -q 'HTTP 404' "$err" || { cat "$err" >&2; die "$repo: cannot read the latest release"; }
+    fi
+}
+
+# Downloads one .deb and checks it against GitHub's digest, when given.
+fetch() {
+    local url=$1 digest=$2 file=$3 sum
+    curl -fsSL --retry 3 -o "$file" "$url"
+    sum=$(sha256sum "$file" | cut -d' ' -f1)
+    [ -z "$digest" ] || [ "$sum" = "$digest" ] || die "$url: sha256 differs from GitHub's digest"
+    echo "$sum"
+}
+
+# Pool path from the package's own control fields, Debian style.
+pool_path() {
+    local file=$1 pkg ver arch
+    pkg=$(dpkg-deb -f "$file" Package)
+    ver=$(dpkg-deb -f "$file" Version)
+    arch=$(dpkg-deb -f "$file" Architecture)
+    [[ $pkg =~ ^[a-z0-9][a-z0-9.+-]+$ ]] || die "$file: bad package name: $pkg"
+    [[ $ver =~ ^[0-9][A-Za-z0-9.+~-]*$ ]] || die "$pkg: bad version: $ver"
+    [[ " $archs all " == *" $arch "* ]] || die "$pkg: unsupported architecture: $arch"
+    echo "pool/main/${pkg:0:1}/$pkg/${pkg}_${ver}_${arch}.deb"
+}
+
+# pool.txt: "<sha256> <pool path> <url>", one line per package. Two
+# repositories may not ship the same package for the same architecture.
+collect() {
+    local repos repo url digest file sum path slot n=0
+    declare -A shipped_by
+    repos=$(owner_repos)
+    for repo in $repos; do
+        # Into a file, not < <(…): a failure there would go unnoticed.
+        release_debs "$repo" > "$work/list"
+        while read -r url digest; do
+            [ -n "$url" ] || continue
+            n=$((n + 1))
+            file=$work/dl/$n.deb
+            sum=$(fetch "$url" "$digest" "$file")
+            path=$(pool_path "$file")
+            # Package and architecture, whatever the version.
+            slot="${path%/*} ${path##*_}"
+            [ -z "${shipped_by[$slot]:-}" ] || die "$path: another build comes from ${shipped_by[$slot]}"
+            shipped_by[$slot]=$repo
+            mkdir -p "$work/repo/${path%/*}"
+            mv "$file" "$work/repo/$path"
+            echo "$sum $path $url"
+        done < "$work/list"
+    done | sort -k2 > "$work/repo/pool.txt"
+    [ -s "$work/repo/pool.txt" ] || die "no .deb in any release of $owner"
+}
+
+index() {
+    local arch dir
+    cd "$work/repo"
+    for arch in $archs; do
+        dir=dists/$suite/main/binary-$arch
+        mkdir -p "$dir"
+        apt-ftparchive --arch "$arch" packages pool > "$dir/Packages"
+        # .xz, never .gz: web servers and Cloudflare cache *.gz for long.
+        xz -9 -k "$dir/Packages"
+    done
+    apt-ftparchive \
+        -o "APT::FTPArchive::Release::Origin=Popamp" \
+        -o "APT::FTPArchive::Release::Label=Popamp" \
+        -o "APT::FTPArchive::Release::Suite=$suite" \
+        -o "APT::FTPArchive::Release::Codename=$suite" \
+        -o "APT::FTPArchive::Release::Architectures=$archs" \
+        -o "APT::FTPArchive::Release::Components=main" \
+        release "dists/$suite" > "$work/Release"
+    mv "$work/Release" "dists/$suite/Release"
+    gpg --batch --yes ${key:+--local-user "$key"} --clearsign -o "dists/$suite/InRelease" "dists/$suite/Release"
+    gpg --batch --yes ${key:+--local-user "$key"} --armor --detach-sign -o "dists/$suite/Release.gpg" "dists/$suite/Release"
+    cd - >/dev/null
+}
+
+collect
+index
+tar -C "$work/repo" -czf "$out/apt-index.tar.gz" dists pool.txt
+cp "$work/repo/pool.txt" "$out/pool.txt"
+cat "$out/pool.txt"
