@@ -1,0 +1,27 @@
+name: Test install
+
+# Installs Popamp from https://apt.popamp.app, as its page tells users to,
+# on each supported Debian and Ubuntu, on amd64 and arm64 (bin/test-install).
+# Daily an hour after the Index run, so the server has mirrored it.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: ${{ matrix.image }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12", "debian:13", "ubuntu:22.04", "ubuntu:24.04", "ubuntu:26.04"]
+        arch: [amd64, arm64]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: bin/test-install

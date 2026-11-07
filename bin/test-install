@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Installs Popamp from https://apt.popamp.app the way its page tells users
+# to, on a fresh Debian or Ubuntu, and checks that it starts: popamp,
+# then popamp-plus in its place, then removal. Run as root in a throwaway
+# container or machine; it changes the system.
+#
+# Usage: bin/test-install
+#   APT_URL overrides the repository (default https://apt.popamp.app).
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+url=${APT_URL:-https://apt.popamp.app}
+
+step() { echo "::group::$*"; }
+endstep() { echo "::endgroup::"; }
+die() { echo "::error::$*"; exit 1; }
+
+# Succeeds when the package is installed.
+installed() { [ "$(dpkg-query -W -f '${db:Status-Status}' "$1" 2>/dev/null)" = installed ]; }
+
+# The binary links, and stays up for 5 s in a virtual display with no
+# sound card, as on a headless box.
+starts() {
+    local pkg=$1 missing
+    [ -x /usr/bin/popamp ] || die "$pkg: no /usr/bin/popamp"
+    missing=$(ldd /usr/bin/popamp | grep 'not found' || true)
+    [ -z "$missing" ] || die "$pkg: missing libraries: $missing"
+    local status=0
+    HOME=$(mktemp -d) timeout 5 xvfb-run -a /usr/bin/popamp > /tmp/popamp.log 2>&1 || status=$?
+    if [ "$status" -ne 124 ]; then
+        cat /tmp/popamp.log
+        die "$pkg: popamp exited with $status within 5 s"
+    fi
+    echo "$pkg: popamp runs"
+}
+
+step "System"
+. /etc/os-release
+echo "$PRETTY_NAME, $(dpkg --print-architecture), glibc $(ldd --version | head -1 | awk '{ print $NF }')"
+apt-get update -q
+apt-get install -y -q --no-install-recommends ca-certificates curl xvfb xauth
+endstep
+
+step "Add the repository"
+mkdir -p /etc/apt/keyrings
+curl -fsSLo /etc/apt/keyrings/popamp.gpg "$url/popamp.gpg"
+curl -fsSLo /etc/apt/sources.list.d/popamp.sources "$url/popamp.sources"
+[ "$url" = https://apt.popamp.app ] || sed -i "s|^URIs: .*|URIs: $url|" /etc/apt/sources.list.d/popamp.sources
+apt-get update -q 2>&1 | tee /tmp/update.log
+grep -qE '^(W|E):' /tmp/update.log && die "apt update warned or failed"
+apt-cache policy popamp popamp-plus
+endstep
+
+# With Recommends, as a user's apt does by default.
+step "Install popamp"
+apt-get install -y -q popamp
+installed popamp || die "popamp is not installed"
+starts popamp
+endstep
+
+step "Replace it with popamp-plus"
+apt-get install -y -q popamp-plus
+installed popamp-plus || die "popamp-plus is not installed"
+! installed popamp || die "popamp stayed next to popamp-plus"
+starts popamp-plus
+endstep
+
+step "Remove"
+apt-get purge -y -q popamp-plus
+[ ! -e /usr/bin/popamp ] || die "/usr/bin/popamp is left after purge"
+endstep
+
+echo "all good on $PRETTY_NAME $(dpkg --print-architecture)"
