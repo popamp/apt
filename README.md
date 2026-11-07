@@ -55,7 +55,7 @@ with:
             echo "::warning::APT_INDEX_TOKEN is not set; the daily Index run will pick this release up"
             exit 0
           fi
-          gh workflow run index.yml -R popamp/apt
+          gh workflow run index.yml -R popamp/apt --ref main
 ```
 
 `APT_INDEX_TOKEN` is a fine-grained token for popamp/apt only, with

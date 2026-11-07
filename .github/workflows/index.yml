@@ -3,7 +3,7 @@ name: Index
 # Rebuilds the signed apt index from the latest release of every public
 # repository of this owner (popamp, skins, plug-ins) and publishes it in
 # the release "index", which the server mirrors (bin/mirror). A release
-# elsewhere starts it with `gh workflow run index.yml -R popamp/apt`;
+# elsewhere starts it with `gh workflow run index.yml -R popamp/apt --ref main`;
 # the daily run catches a start that got lost. Unchanged releases leave
 # the index as it is.
 # Needs the secret APT_SIGNING_KEY: the armored secret key, without a
