@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Popamp apt repository</title>
+<meta name="description" content="The apt repository of Popamp, its skins and its plug-ins, for Debian and Ubuntu.">
+<style>
+:root{--canvas:#fffaf0;--card:#f5ecd8;--ink:#16121f;--body:#3d3848;--muted:#6f687a;--pink:#ff3d6e;--shell:#16121f;--shell-text:#e9e4f5}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--body);font:400 16px/1.6 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:min(760px,calc(100% - 32px));margin:64px auto}
+h1,h2{color:var(--ink);font-weight:650;line-height:1.2;margin:0 0 12px}
+h1{font-size:clamp(28px,6vw,40px)}
+h2{font-size:20px;margin-top:40px}
+a{color:var(--ink);text-decoration-color:var(--pink);text-underline-offset:3px}
+code{font:500 .92em ui-monospace,"JetBrains Mono",monospace}
+pre{background:var(--shell);color:var(--shell-text);border-radius:16px;padding:18px 20px;overflow-x:auto;font:500 14px/1.8 ui-monospace,"JetBrains Mono",monospace;margin:0}
+pre .c{color:#8d86a0}
+ul{padding-left:20px}
+.muted{color:var(--muted);font-size:14px;margin-top:48px}
+</style>
+</head>
+<body>
+<main>
+<h1>Popamp apt repository</h1>
+<p>Packages of <a href="https://popamp.app">Popamp</a>, its skins and its plug-ins for Debian and Ubuntu, x86_64 and ARM64. Add it once, and updates come with the rest of the system.</p>
+
+<h2>Add the repository</h2>
+<pre>sudo mkdir -p /etc/apt/keyrings
+sudo curl -fsSLo /etc/apt/keyrings/popamp.gpg https://apt.popamp.app/popamp.gpg
+sudo curl -fsSLo /etc/apt/sources.list.d/popamp.sources https://apt.popamp.app/popamp.sources
+sudo apt update</pre>
+
+<h2>Install</h2>
+<pre>sudo apt install popamp        <span class="c"># the player</span>
+sudo apt install popamp-plus   <span class="c"># the player with plug-ins</span></pre>
+
+<h2>Files</h2>
+<ul>
+<li><a href="popamp.gpg"><code>popamp.gpg</code></a>: the signing key</li>
+<li><a href="popamp.sources"><code>popamp.sources</code></a>: the sources entry, suite <code>stable</code>, component <code>main</code></li>
+<li><a href="dists/stable/InRelease"><code>dists/stable/InRelease</code></a>: the signed index</li>
+</ul>
+
+<p class="muted">Built from the releases on <a href="https://github.com/popamp">GitHub</a> by <a href="https://github.com/popamp/apt">popamp/apt</a>.</p>
+</main>
+</body>
+</html>
