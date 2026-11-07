@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Builds the .deb of a skin or plug-in repository:
+#   skin-<name>   -> popamp-skin-<name>,   files in /usr/share/popamp/skins/<name>
+#   plugin-<id>   -> popamp-plugin-<id>,   files in /usr/share/popamp/plugins/<id>
+# Popamp reads both folders after the user's own, where a folder of the
+# same name wins. A skin ships the repository's tracked files but its own
+# (README, tools/, dot files); a plug-in ships plugin.toml and plugin.wasm.
+#
+# Usage: bin/build-addon-deb <repo name> <repo dir> <version> <out dir>
+#   RECOMMENDS, if set, becomes the Recommends field (e.g. "yt-dlp, ffmpeg").
+# Needs: git, dpkg-deb, python3 (3.11 or newer).
+set -euo pipefail
+
+die() { echo "error: $*" >&2; exit 1; }
+
+[ $# -eq 4 ] || die "usage: $0 <repo name> <repo dir> <version> <out dir>"
+repo=$1
+src=$(cd "$2" && pwd)
+version=$3
+out=$4
+recommends=${RECOMMENDS:-}
+
+# The last Popamp that read only the user's folders.
+popamp_without_system_dirs=0.5.0
+
+[[ $repo =~ ^(skin|plugin)-([a-z0-9][a-z0-9-]*)$ ]] || die "$repo: not skin-<name> or plugin-<id>"
+kind=${BASH_REMATCH[1]}
+name=${BASH_REMATCH[2]}
+[[ $version =~ ^[0-9][A-Za-z0-9.+~]*$ ]] || die "bad version: $version"
+package=popamp-$repo
+
+# One key of a TOML file, empty when it is missing.
+toml() {
+    python3 -c 'import sys, tomllib
+d = tomllib.load(open(sys.argv[1], "rb"))
+for k in sys.argv[2].split("."):
+    d = d.get(k, {}) if isinstance(d, dict) else {}
+print(d if isinstance(d, str) else "")' "$1" "$2"
+}
+
+# The text of README.md's first paragraph, the one after the title.
+readme_summary() {
+    awk '/^# / { title = 1; next } title && NF { p = p (p ? " " : "") $0; next } p { exit } END { print p }' "$src/README.md"
+}
+
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+pkg=$stage/pkg
+doc=$pkg/usr/share/doc/$package
+
+case $kind in
+skin)
+    [ -f "$src/skin.toml" ] || die "$src: no skin.toml"
+    title=$(toml "$src/skin.toml" meta.name)
+    [ -n "$title" ] || die "skin.toml: no [meta] name"
+    dest=$pkg/usr/share/popamp/skins/$name
+    depends="popamp (>> $popamp_without_system_dirs)"
+    summary="$title, a skin for Popamp"
+    long=$(readme_summary)
+    git -C "$src" ls-files -z | while IFS= read -r -d '' f; do
+        case $f in
+            .* | */.* | tools/* | README.md | LICENSE-*) continue ;;
+        esac
+        install -Dm644 "$src/$f" "$dest/$f"
+    done
+    ;;
+plugin)
+    [ -f "$src/plugin.toml" ] || die "$src: no plugin.toml"
+    [ -f "$src/plugin.wasm" ] || die "$src: no plugin.wasm; build it first"
+    id=$(toml "$src/plugin.toml" id)
+    [ "$id" = "$name" ] || die "plugin.toml says id \"$id\", the repository is plugin-$name"
+    manifest_version=$(toml "$src/plugin.toml" version)
+    [ "$manifest_version" = "$version" ] || die "plugin.toml says version $manifest_version, the release is $version"
+    title=$(toml "$src/plugin.toml" name)
+    dest=$pkg/usr/share/popamp/plugins/$name
+    depends="popamp-plus (>> $popamp_without_system_dirs)"
+    summary="$title, a plug-in for Popamp Plus"
+    long="$(toml "$src/plugin.toml" description) It stays off until it is allowed in Options > Plug-ins."
+    install -Dm644 "$src/plugin.toml" "$dest/plugin.toml"
+    install -Dm644 "$src/plugin.wasm" "$dest/plugin.wasm"
+    ;;
+esac
+[ -n "$long" ] || die "no description for $package"
+
+for f in "$src"/LICENSE-*; do
+    [ ! -f "$f" ] || install -Dm644 "$f" "$doc/${f##*/}"
+done
+cat > "$doc/copyright" <<EOF
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Source: https://github.com/popamp/$repo
+
+Files: *
+Copyright: Popamp contributors
+License: MIT or Apache-2.0
+ See LICENSE-MIT and LICENSE-APACHE in this directory. The Apache licence
+ is also in /usr/share/common-licenses/Apache-2.0.
+EOF
+
+mkdir -p "$pkg/DEBIAN"
+{
+    echo "Package: $package"
+    echo "Version: $version"
+    echo "Section: sound"
+    echo "Priority: optional"
+    echo "Architecture: all"
+    echo "Maintainer: Gunyakov <web@gunyakov.pro>"
+    echo "Installed-Size: $(du -sk "$pkg/usr" | cut -f1)"
+    echo "Homepage: https://github.com/popamp/$repo"
+    echo "Depends: $depends"
+    [ -z "$recommends" ] || echo "Recommends: $recommends"
+    echo "Description: $summary"
+    fold -s -w 72 <<< "$long" | sed 's/ *$//; s/^/ /'
+} > "$pkg/DEBIAN/control"
+
+mkdir -p "$out"
+deb=$out/${package}_${version}_all.deb
+dpkg-deb -Zxz --root-owner-group --build "$pkg" "$deb" >/dev/null
+echo "$deb"

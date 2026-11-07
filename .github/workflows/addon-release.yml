@@ -1,0 +1,98 @@
+name: Add-on release
+
+# Called by a skin-<name> or plugin-<id> repository. Builds the package
+# popamp-<repo>_<version>_all.deb with bin/build-addon-deb (a plug-in's
+# plugin.wasm is built afresh first) and keeps it as a run artifact. On a
+# tag v<version> it also publishes the package in that tag's release and
+# starts the Index workflow, so it reaches https://apt.popamp.app.
+#
+# The caller, .github/workflows/release.yml:
+#
+#   name: Release
+#   on:
+#     push:
+#       tags: ["v*"]
+#     workflow_dispatch:          # builds the package only
+#   permissions:
+#     contents: write
+#   jobs:
+#     release:
+#       uses: popamp/apt/.github/workflows/addon-release.yml@main
+#       with:
+#         recommends: "yt-dlp, ffmpeg"   # optional
+#       secrets: inherit                 # APT_INDEX_TOKEN
+on:
+  workflow_call:
+    inputs:
+      recommends:
+        description: The package's Recommends field, e.g. "yt-dlp, ffmpeg"
+        type: string
+        default: ""
+    secrets:
+      APT_INDEX_TOKEN:
+        required: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: src
+      - uses: actions/checkout@v7
+        with:
+          repository: popamp/apt
+          path: apt
+      - name: Install the Rust toolchain
+        if: hashFiles('src/plugin.toml') != ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build plugin.wasm
+        if: hashFiles('src/plugin.toml') != ''
+        run: src/build.sh
+      # A tag gives the version; otherwise a plug-in's manifest does, and
+      # a skin is 0~dev.
+      - name: Build the package
+        env:
+          RECOMMENDS: ${{ inputs.recommends }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=${GITHUB_REF_NAME#v}
+            if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+              echo "::error::the tag $GITHUB_REF_NAME is not v<version>" >&2
+              exit 1
+            fi
+          elif [ -f src/plugin.toml ]; then
+            version=$(sed -n 's/^version = "\(.*\)"$/\1/p' src/plugin.toml)
+          else
+            version=0~dev
+          fi
+          apt/bin/build-addon-deb "${GITHUB_REPOSITORY#*/}" src "$version" out
+          dpkg-deb -I out/*.deb
+          dpkg-deb -c out/*.deb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb
+          path: out/*.deb
+      - name: Publish it in the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/*.deb --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" out/*.deb --verify-tag --generate-notes -R "$GITHUB_REPOSITORY"
+          fi
+      - name: Rebuild the apt index
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.APT_INDEX_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::APT_INDEX_TOKEN is not set; the daily Index run of popamp/apt will pick this release up"
+            exit 0
+          fi
+          gh workflow run index.yml -R popamp/apt --ref main
