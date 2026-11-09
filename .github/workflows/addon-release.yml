@@ -20,12 +20,17 @@ name: Add-on release
 #       uses: popamp/apt/.github/workflows/addon-release.yml@main
 #       with:
 #         recommends: "yt-dlp, ffmpeg"   # optional
+#         min-popamp: "0.7.0"            # optional
 #       secrets: inherit                 # APT_INDEX_TOKEN
 on:
   workflow_call:
     inputs:
       recommends:
         description: The package's Recommends field, e.g. "yt-dlp, ffmpeg"
+        type: string
+        default: ""
+      min-popamp:
+        description: The oldest Popamp the add-on runs on, e.g. "0.7.0"
         type: string
         default: ""
     secrets:
@@ -57,6 +62,7 @@ jobs:
       - name: Build the package
         env:
           RECOMMENDS: ${{ inputs.recommends }}
+          MIN_POPAMP: ${{ inputs.min-popamp }}
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             version=${GITHUB_REF_NAME#v}
