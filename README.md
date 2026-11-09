@@ -51,7 +51,9 @@ files in `/usr/share/popamp/skins/<name>`; `plugin-<id>` becomes
 `popamp-plugin-<id>` in `/usr/share/popamp/plugins/<id>`. Both are
 `Architecture: all`. A skin depends on `popamp (>> 0.5.0)`, a plug-in on
 `popamp-plus (>> 0.5.0)`: 0.5.0 was the last Popamp that read only the
-user's folders, and popamp-plus provides `popamp (= its version)`.
+user's folders, and popamp-plus provides `popamp (= its version)`. An
+add-on that needs a newer player says so with the workflow's `min-popamp`
+and depends on `(>= that version)` instead.
 A plug-in stays off until the user allows it, packaged or not.
 
 Such a repository has a `.github/workflows/release.yml` that calls

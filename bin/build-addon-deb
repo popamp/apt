@@ -8,6 +8,7 @@
 #
 # Usage: bin/build-addon-deb <repo name> <repo dir> <version> <out dir>
 #   RECOMMENDS, if set, becomes the Recommends field (e.g. "yt-dlp, ffmpeg").
+#   MIN_POPAMP, if set, is the oldest Popamp the add-on runs on (e.g. 0.7.0).
 # Needs: git, dpkg-deb, python3 (3.11 or newer).
 set -euo pipefail
 
@@ -19,9 +20,14 @@ src=$(cd "$2" && pwd)
 version=$3
 out=$4
 recommends=${RECOMMENDS:-}
+min_popamp=${MIN_POPAMP:-}
 
-# The last Popamp that read only the user's folders.
-popamp_without_system_dirs=0.5.0
+# Any Popamp after 0.5.0, the last that read only the user's folders.
+popamp_version=">> 0.5.0"
+if [ -n "$min_popamp" ]; then
+    [[ $min_popamp =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "bad MIN_POPAMP: $min_popamp"
+    popamp_version=">= $min_popamp"
+fi
 
 [[ $repo =~ ^(skin|plugin)-([a-z0-9][a-z0-9-]*)$ ]] || die "$repo: not skin-<name> or plugin-<id>"
 kind=${BASH_REMATCH[1]}
@@ -54,7 +60,7 @@ skin)
     title=$(toml "$src/skin.toml" meta.name)
     [ -n "$title" ] || die "skin.toml: no [meta] name"
     dest=$pkg/usr/share/popamp/skins/$name
-    depends="popamp (>> $popamp_without_system_dirs)"
+    depends="popamp ($popamp_version)"
     summary="$title, a skin for Popamp"
     long=$(readme_summary)
     git -C "$src" ls-files -z | while IFS= read -r -d '' f; do
@@ -73,7 +79,7 @@ plugin)
     [ "$manifest_version" = "$version" ] || die "plugin.toml says version $manifest_version, the release is $version"
     title=$(toml "$src/plugin.toml" name)
     dest=$pkg/usr/share/popamp/plugins/$name
-    depends="popamp-plus (>> $popamp_without_system_dirs)"
+    depends="popamp-plus ($popamp_version)"
     summary="$title, a plug-in for Popamp Plus"
     long="$(toml "$src/plugin.toml" description) It stays off until it is allowed in Options > Plug-ins."
     install -Dm644 "$src/plugin.toml" "$dest/plugin.toml"
