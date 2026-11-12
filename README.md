@@ -55,6 +55,11 @@ user's folders, and popamp-plus provides `popamp (= its version)`. An
 add-on that needs a newer player says so with the workflow's `min-popamp`
 and depends on `(>= that version)` instead.
 A plug-in stays off until the user allows it, packaged or not.
+The package's description is the README paragraph just above its first
+picture. Its copyright file says MIT or Apache-2.0 by the Popamp
+contributors, unless the repository has a `COPYRIGHT` file of its own in
+the Debian copyright format, as a skin ported from other authors' artwork
+does.
 
 Such a repository has a `.github/workflows/release.yml` that calls
 `addon-release.yml` (the caller is in its header). Pushing a tag
