@@ -4,7 +4,12 @@
 #   plugin-<id>   -> popamp-plugin-<id>,   files in /usr/share/popamp/plugins/<id>
 # Popamp reads both folders after the user's own, where a folder of the
 # same name wins. A skin ships the repository's tracked files but its own
-# (README, tools/, dot files); a plug-in ships plugin.toml and plugin.wasm.
+# (README, COPYRIGHT, tools/, dot files); a plug-in ships plugin.toml and
+# plugin.wasm.
+#
+# The package's copyright file says MIT or Apache-2.0 by the Popamp
+# contributors, unless the repository has a COPYRIGHT file of its own in
+# the Debian copyright format (for artwork by other authors).
 #
 # Usage: bin/build-addon-deb <repo name> <repo dir> <version> <out dir>
 #   RECOMMENDS, if set, becomes the Recommends field (e.g. "yt-dlp, ffmpeg").
@@ -44,9 +49,16 @@ for k in sys.argv[2].split("."):
 print(d if isinstance(d, str) else "")' "$1" "$2"
 }
 
-# The text of README.md's first paragraph, the one after the title.
+# The paragraph of README.md just above its first picture, or its first
+# paragraph when it has none. Headings are never taken, so a warning set
+# as headings under the title stays out of the description.
 readme_summary() {
-    awk '/^# / { title = 1; next } title && NF { p = p (p ? " " : "") $0; next } p { exit } END { print p }' "$src/README.md"
+    awk 'function flush() { if (p != "") { if (first == "") first = p; last = p; p = "" } }
+         /^#/ { flush(); next }
+         /^!\[/ { flush(); if (last != "") { print last; found = 1; exit } next }
+         NF { p = p (p ? " " : "") $0; next }
+         { flush() }
+         END { if (!found) { flush(); print first } }' "$src/README.md"
 }
 
 stage=$(mktemp -d)
@@ -65,7 +77,7 @@ skin)
     long=$(readme_summary)
     git -C "$src" ls-files -z | while IFS= read -r -d '' f; do
         case $f in
-            .* | */.* | tools/* | README.md | LICENSE-*) continue ;;
+            .* | */.* | tools/* | README.md | COPYRIGHT | LICENSE-*) continue ;;
         esac
         install -Dm644 "$src/$f" "$dest/$f"
     done
@@ -91,7 +103,10 @@ esac
 for f in "$src"/LICENSE-*; do
     [ ! -f "$f" ] || install -Dm644 "$f" "$doc/${f##*/}"
 done
-cat > "$doc/copyright" <<EOF
+if [ -f "$src/COPYRIGHT" ]; then
+    install -m644 "$src/COPYRIGHT" "$doc/copyright"
+else
+    cat > "$doc/copyright" <<EOF
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Source: https://github.com/popamp/$repo
 
@@ -101,6 +116,7 @@ License: MIT or Apache-2.0
  See LICENSE-MIT and LICENSE-APACHE in this directory. The Apache licence
  is also in /usr/share/common-licenses/Apache-2.0.
 EOF
+fi
 
 mkdir -p "$pkg/DEBIAN"
 {
