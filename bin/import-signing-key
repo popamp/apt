@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Imports the repository's signing key in a CI job: the armored secret key
+# in $APT_SIGNING_KEY goes into a keyring of the job's own, and is refused
+# unless it is the key in site/popamp.gpg. Tells later steps GNUPGHOME and
+# KEY (the fingerprint) through $GITHUB_ENV.
+# Needs: gpg.
+set -euo pipefail
+
+die() { echo "::error::$*" >&2; exit 1; }
+
+[ -n "${APT_SIGNING_KEY:-}" ] || die "the secret APT_SIGNING_KEY is not set"
+root=$(cd "$(dirname "$0")/.." && pwd)
+export GNUPGHOME="$RUNNER_TEMP/gnupg"
+mkdir -m 700 "$GNUPGHOME"
+printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
+key=$(gpg --batch --with-colons --show-keys "$root/site/popamp.gpg" | awk -F: '/^fpr:/ { print $10; exit }')
+gpg --batch --list-secret-keys "$key" >/dev/null 2>&1 || die "APT_SIGNING_KEY is not the key in site/popamp.gpg ($key)"
+echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+echo "KEY=$key" >> "$GITHUB_ENV"

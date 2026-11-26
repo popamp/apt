@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Builds Popamp Plus into Popamp's Flatpak repository, from a checkout of
+# popamp/popamp, and signs it: the new commit on the branch "stable", the
+# summary, the appstream data. The commit before it stays, with a static
+# delta from it, so an update downloads only what changed; older ones go.
+#
+# Usage: bin/build-flatpak-repo <popamp checkout> <repo dir> <gpg key id>
+#   The repo dir may hold the repository as published, or not exist yet.
+#   The key, with its secret part, must be in gpg's keyring ($GNUPGHOME).
+# Needs: flatpak, flatpak-builder, and the remote "flathub" for the
+# runtime and the Rust SDK extension (installed for the user).
+set -euo pipefail
+
+die() { echo "error: $*" >&2; exit 1; }
+
+[ $# -eq 3 ] || die "usage: $0 <popamp checkout> <repo dir> <gpg key id>"
+src=$1
+repo=$2
+key=$3
+manifest=$src/packaging/flatpak/io.github.popamp.popamp.yml
+[ -f "$manifest" ] || die "$manifest: no Flatpak manifest in this checkout"
+sign=(--gpg-sign="$key" ${GNUPGHOME:+--gpg-homedir="$GNUPGHOME"})
+
+build=$(mktemp -d)
+trap 'rm -rf "$build"' EXIT
+
+flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse \
+    --default-branch=stable --repo="$repo" "${sign[@]}" \
+    --state-dir="$build/state" "$build/app" "$manifest"
+flatpak build-update-repo "${sign[@]}" --title=Popamp --default-branch=stable \
+    --prune --prune-depth=1 --generate-static-deltas "$repo"

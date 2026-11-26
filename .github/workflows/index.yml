@@ -31,21 +31,7 @@ jobs:
       - name: Import the signing key
         env:
           APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
-        run: |
-          if [ -z "$APT_SIGNING_KEY" ]; then
-            echo "::error::the secret APT_SIGNING_KEY is not set" >&2
-            exit 1
-          fi
-          export GNUPGHOME="$RUNNER_TEMP/gnupg"
-          mkdir -m 700 "$GNUPGHOME"
-          printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --import
-          key=$(gpg --batch --with-colons --show-keys site/popamp.gpg | awk -F: '/^fpr:/ { print $10; exit }')
-          if ! gpg --batch --list-secret-keys "$key" >/dev/null 2>&1; then
-            echo "::error::APT_SIGNING_KEY is not the key in site/popamp.gpg ($key)" >&2
-            exit 1
-          fi
-          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-          echo "KEY=$key" >> "$GITHUB_ENV"
+        run: bin/import-signing-key
       - name: Build the index
         env:
           GH_TOKEN: ${{ github.token }}
