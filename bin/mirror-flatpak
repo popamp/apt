@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Mirrors Popamp's Flatpak repository into <web root>/flatpak: fetches the
+# repository CI built and signed (release "flatpak" of popamp/apt) when it
+# changed, and switches it in. Holds no secret: Flatpak itself checks every
+# commit and the summary against the key in popamp.flatpakref.
+# bin/mirror runs it under its lock, every run; an unchanged repository
+# costs one small download.
+#
+# Usage: bin/mirror-flatpak <web root>
+#   Its state goes into <web root>/../private/flatpak-mirror.
+# Needs: curl, tar.
+set -euo pipefail
+
+die() { echo "error: $*" >&2; exit 1; }
+
+[ $# -eq 1 ] || die "usage: $0 <web root>"
+pub=$(cd "$1" && pwd)
+state=$(cd "$pub/.." && pwd)/private/flatpak-mirror
+base=${FLATPAK_REPO_URL:-https://github.com/popamp/apt/releases/download/flatpak}
+
+umask 022
+mkdir -p "$state"
+run=$state/run
+rm -rf "$run"
+mkdir -p "$run/new"
+trap 'rm -rf "$run"' EXIT
+
+# built.txt names the commit of popamp the repository was built from; it
+# is uploaded after the repository, so it never names one not there yet.
+curl -fsSL --retry 3 -o "$run/built.txt" "$base/built.txt" || exit 0
+if cmp -s "$run/built.txt" "$state/built.txt" && [ -d "$pub/flatpak" ]; then
+    exit 0
+fi
+
+curl -fsSL --retry 3 -o "$run/repo.tar" "$base/flatpak-repo.tar"
+# Only an OSTree repository; tar itself refuses absolute and ../ names.
+tar -tf "$run/repo.tar" | grep -qvE '^repo/((config|summary(\.sig|\.idx|\.idx\.sig)?)|((objects|refs|deltas|delta-indexes|summaries|extensions|state|tmp)(/.*)?))?$' \
+    && die "unexpected files in the Flatpak repository"
+tar -xf "$run/repo.tar" -C "$run/new" --no-same-owner --no-same-permissions
+[ -f "$run/new/repo/summary" ] && [ -f "$run/new/repo/config" ] || die "the Flatpak repository has no summary"
+rm -rf "$run/new/repo/tmp" "$run/new/repo/state"
+
+[ ! -d "$pub/flatpak" ] || mv "$pub/flatpak" "$run/old"
+mv "$run/new/repo" "$pub/flatpak"
+mv "$run/built.txt" "$state/built.txt"
+echo "flatpak: $(cat "$state/built.txt")"

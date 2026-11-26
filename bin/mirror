@@ -36,6 +36,9 @@ trap 'rm -rf "$run"' EXIT
 # The site files (key, sources file, page) every run: they come from git.
 install -m 644 "$root"/site/* "$pub/"
 
+# The Flatpak repository rides along; its failure leaves apt alone.
+"$root/bin/mirror-flatpak" "$pub" || echo "error: the Flatpak mirror failed" >&2
+
 curl -fsSL --retry 3 -o "$run/index.tar.gz" "$index_url"
 if cmp -s "$run/index.tar.gz" "$state/current.tar.gz" && [ -d "$pub/dists" ]; then
     exit 0

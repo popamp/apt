@@ -1,0 +1,100 @@
+name: Flatpak
+
+# Builds Popamp Plus from the latest release of popamp/popamp into the
+# signed Flatpak repository of https://apt.popamp.app/flatpak/ and
+# publishes it in the release "flatpak", which the server mirrors
+# (bin/mirror-flatpak). A release of popamp starts it with
+# `gh workflow run flatpak.yml -R popamp/apt --ref main`; the daily run
+# catches a start that got lost. A release already built is not built again.
+# Needs the secret APT_SIGNING_KEY, as the Index workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag, branch or commit of popamp/popamp (default: its latest release)"
+        required: false
+  schedule:
+    - cron: "47 4 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flatpak
+
+env:
+  APP: popamp/popamp
+
+jobs:
+  flatpak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Find what to build
+        id: what
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref }}
+        run: |
+          ref=${REF:-$(gh release view -R "$APP" --json tagName -q .tagName)}
+          sha=$(gh api "repos/$APP/commits/$ref" -q .sha)
+          echo "$ref $sha" > built.txt
+          if gh release download flatpak -p built.txt -O old-built.txt 2>/dev/null \
+              && [ "$(cut -d' ' -f2 old-built.txt)" = "$sha" ]; then
+            echo "$ref ($sha) is built already"
+          elif ! gh api "repos/$APP/contents/packaging/flatpak/io.github.popamp.popamp.yml?ref=$sha" >/dev/null 2>&1; then
+            echo "::notice::$ref has no Flatpak manifest"
+          else
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7
+        if: steps.what.outputs.sha
+        with:
+          repository: ${{ env.APP }}
+          ref: ${{ steps.what.outputs.sha }}
+          path: popamp
+      # The runtime, the SDK and the Rust build want more room than the
+      # runner leaves free.
+      - name: Make room and install the tools
+        if: steps.what.outputs.sha
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          # flatpak-builder's sandbox needs user namespaces, which AppArmor holds back.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Import the signing key
+        if: steps.what.outputs.sha
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: bin/import-signing-key
+      - name: Build into the published repository
+        if: steps.what.outputs.sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release download flatpak -p flatpak-repo.tar 2>/dev/null; then
+            tar -xf flatpak-repo.tar && rm flatpak-repo.tar
+          fi
+          bin/build-flatpak-repo popamp repo "$KEY"
+      # As a user would: from the repository, checked against the key.
+      - name: Install it from the repository
+        if: steps.what.outputs.sha
+        run: |
+          flatpak --user remote-add --gpg-import=site/popamp.gpg check "file://$PWD/repo"
+          flatpak --user install -y --noninteractive check io.github.popamp.popamp//stable
+          flatpak --user info io.github.popamp.popamp
+      # built.txt goes up last: it is what the server and the next run
+      # compare against, so a failed upload is repeated rather than skipped.
+      - name: Publish it
+        if: steps.what.outputs.sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -cf flatpak-repo.tar --exclude=repo/tmp --exclude=repo/state repo
+          gh release view flatpak >/dev/null 2>&1 \
+            || gh release create flatpak --title "Flatpak repository" --latest=false \
+                 --notes "The signed Flatpak repository of https://apt.popamp.app/flatpak/, rebuilt by the Flatpak workflow. Not a release of anything."
+          gh release upload flatpak flatpak-repo.tar --clobber
+          gh release upload flatpak built.txt --clobber

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Popamp apt repository</title>
-<meta name="description" content="The apt repository of Popamp, its skins and its plug-ins, for Debian and Ubuntu.">
+<meta name="description" content="The apt repository of Popamp, its skins and its plug-ins, for Debian and Ubuntu, and its Flatpak repository.">
 <style>
 :root{--canvas:#fffaf0;--card:#f5ecd8;--ink:#16121f;--body:#3d3848;--muted:#6f687a;--pink:#ff3d6e;--shell:#16121f;--shell-text:#e9e4f5}
 *{box-sizing:border-box}
@@ -36,11 +36,16 @@ sudo apt update</pre>
 <pre>sudo apt install popamp        <span class="c"># the player</span>
 sudo apt install popamp-plus   <span class="c"># the player with plug-ins</span></pre>
 
+<h2>Flatpak</h2>
+<p>Popamp with plug-ins, for any distribution with Flatpak, x86_64. Updates come with your other Flatpak apps.</p>
+<pre>flatpak install --user https://apt.popamp.app/popamp.flatpakref</pre>
+
 <h2>Files</h2>
 <ul>
 <li><a href="popamp.gpg"><code>popamp.gpg</code></a>: the signing key</li>
 <li><a href="popamp.sources"><code>popamp.sources</code></a>: the sources entry, suite <code>stable</code>, component <code>main</code></li>
 <li><a href="dists/stable/InRelease"><code>dists/stable/InRelease</code></a>: the signed index</li>
+<li><a href="popamp.flatpakref"><code>popamp.flatpakref</code></a>, <a href="popamp.flatpakrepo"><code>popamp.flatpakrepo</code></a>: the Flatpak app and repository, signed with the same key</li>
 </ul>
 
 <p class="muted">Built from the releases on <a href="https://github.com/popamp">GitHub</a> by <a href="https://github.com/popamp/apt">popamp/apt</a>.</p>

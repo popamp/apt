@@ -1,0 +1,11 @@
+[Flatpak Ref]
+Name=io.github.popamp.popamp
+Branch=stable
+Title=Popamp
+Url=https://apt.popamp.app/flatpak/
+SuggestRemoteName=popamp
+Homepage=https://popamp.app
+Icon=https://popamp.app/apple-touch-icon.png
+RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
+IsRuntime=false
+GPGKey=mDMEau3nORYJKwYBBAHaRw8BAQdAmRUiW5Rk53H5LrKjg7GlyOKQDmf6ek1ynCgZKP0I+Da0FVBvcGFtcCBhcHQgcmVwb3NpdG9yeYiTBBMWCgA7FiEEl+J5elXgWiKO45aau1nGBLZoZgMFAmrt5zkCGwMFCwkIBwICIgIGFQoJCAsCBBYCAwECHgcCF4AACgkQu1nGBLZoZgMPcQEAv4r6RjJU2EmzHCYCkeDEiB2AfO4G6ytjdA10zylGAy0BAIlkAaa5LeWWhqQCGc7GrygTVCR0w90/yraAswlwNhsB
