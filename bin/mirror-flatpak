@@ -8,7 +8,7 @@
 #
 # Usage: bin/mirror-flatpak <web root>
 #   Its state goes into <web root>/../private/flatpak-mirror.
-# Needs: curl, tar, sha256sum.
+# Needs: curl, jq, tar, sha256sum.
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -16,7 +16,9 @@ die() { echo "error: $*" >&2; exit 1; }
 [ $# -eq 1 ] || die "usage: $0 <web root>"
 pub=$(cd "$1" && pwd)
 state=$(cd "$pub/.." && pwd)/private/flatpak-mirror
-base=${FLATPAK_REPO_URL:-https://github.com/popamp/apt/releases/download/flatpak}
+# The files are fetched through the API: github.com's download URLs went
+# on serving the previous upload for many minutes after a new one.
+release=${FLATPAK_RELEASE_API:-https://api.github.com/repos/popamp/apt/releases/tags/flatpak}
 
 umask 022
 mkdir -p "$state"
@@ -27,14 +29,21 @@ trap 'rm -rf "$run"' EXIT
 
 # built.txt names the commit of popamp the repository was built from; it
 # is uploaded after the repository, so it never names one not there yet.
-curl -fsSL --retry 3 -o "$run/built.txt" "$base/built.txt" || exit 0
+curl -fsSL --retry 3 -o "$run/release.json" "$release" || exit 0
+fetch() {
+    local url
+    url=$(jq -r --arg n "$1" '.assets[] | select(.name == $n) | .url' "$run/release.json")
+    [[ $url == https://api.github.com/* ]] || die "no $1 in the release"
+    curl -fsSL --retry 3 -H "Accept: application/octet-stream" -o "$2" "$url"
+}
+fetch built.txt "$run/built.txt"
 if cmp -s "$run/built.txt" "$state/built.txt" && [ -d "$pub/flatpak" ]; then
     exit 0
 fi
 
-curl -fsSL --retry 3 -o "$run/repo.tar" "$base/flatpak-repo.tar"
-# GitHub may serve the previous tar for a few minutes after an upload:
-# a tar that is not the one built.txt names waits for the next run.
+fetch flatpak-repo.tar "$run/repo.tar"
+# The tar must be the one built.txt names: an upload still in progress
+# waits for the next run.
 want=$(cut -d' ' -f3 "$run/built.txt")
 if [ -n "$want" ] && [ "$(sha256sum < "$run/repo.tar" | cut -d' ' -f1)" != "$want" ]; then
     echo "flatpak: the tar is not the one built.txt names yet; next run" >&2
