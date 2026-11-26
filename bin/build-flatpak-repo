@@ -8,7 +8,9 @@
 #   The repo dir may hold the repository as published, or not exist yet.
 #   The key, with its secret part, must be in gpg's keyring ($GNUPGHOME).
 # Needs: flatpak, flatpak-builder, and the remote "flathub" for the
-# runtime and the Rust SDK extension (installed for the user).
+# runtime and the Rust SDK extension (installed for the user). The build
+# goes into the current directory, not /tmp: a flatpak-builder that runs
+# as the Flatpak org.flatpak.Builder has a /tmp of its own.
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -21,11 +23,14 @@ manifest=$src/packaging/flatpak/io.github.popamp.popamp.yml
 [ -f "$manifest" ] || die "$manifest: no Flatpak manifest in this checkout"
 sign=(--gpg-sign="$key" ${GNUPGHOME:+--gpg-homedir="$GNUPGHOME"})
 
-build=$(mktemp -d)
+build=$(mktemp -d "$PWD/.flatpak-build.XXXXXX")
 trap 'rm -rf "$build"' EXIT
 
+# The host's flatpak signs, so the gpg of a flatpak-builder in a sandbox
+# never sees the key.
 flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse \
-    --default-branch=stable --repo="$repo" "${sign[@]}" \
+    --default-branch=stable --repo="$repo" \
     --state-dir="$build/state" "$build/app" "$manifest"
+flatpak build-sign "${sign[@]}" "$repo" io.github.popamp.popamp stable
 flatpak build-update-repo "${sign[@]}" --title=Popamp --default-branch=stable \
     --prune --prune-depth=1 --generate-static-deltas "$repo"
