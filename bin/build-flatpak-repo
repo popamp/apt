@@ -26,9 +26,17 @@ sign=(--gpg-sign="$key" ${GNUPGHOME:+--gpg-homedir="$GNUPGHOME"})
 build=$(mktemp -d "$PWD/.flatpak-build.XXXXXX")
 trap 'rm -rf "$build"' EXIT
 
-# The host's flatpak signs, so the gpg of a flatpak-builder in a sandbox
-# never sees the key.
-flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse \
+# The host's flatpak installs what the build needs and signs: a
+# flatpak-builder in a sandbox finds no refs on flathub, and its gpg never
+# sees the key. The manifest names the runtime and the SDK extensions.
+version=$(sed -nE "s/^runtime-version: *'?([^' ]+)'?.*/\1/p" "$manifest")
+extensions=$(awk '/^sdk-extensions:/ { on = 1; next } on && /^ *- / { print $2; next } { on = 0 }' "$manifest")
+[ -n "$version" ] || die "$manifest: no runtime-version"
+deps=(org.freedesktop.Sdk//"$version" org.freedesktop.Platform//"$version")
+for e in $extensions; do deps+=("$e//$version"); done
+flatpak --user install -y --noninteractive flathub "${deps[@]}"
+
+flatpak-builder --user --disable-rofiles-fuse \
     --default-branch=stable --repo="$repo" \
     --state-dir="$build/state" "$build/app" "$manifest"
 flatpak build-sign "${sign[@]}" "$repo" io.github.popamp.popamp stable
