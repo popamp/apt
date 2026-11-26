@@ -57,7 +57,8 @@ jobs:
       # The runtime, the SDK and the Rust build want more room than the
       # runner leaves free. flatpak-builder comes from Flathub, as
       # org.flatpak.Builder: Ubuntu's appstreamcli is too old to compose
-      # the metadata.
+      # the metadata. Its own data folder is not the user's installation,
+      # which holds the runtime and the SDK, so it is told where that is.
       - name: Make room and install the tools
         if: steps.what.outputs.sha
         run: |
@@ -68,7 +69,7 @@ jobs:
           flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak --user install -y --noninteractive flathub org.flatpak.Builder
           mkdir -p ~/.local/bin
-          printf '#!/bin/sh\nexec dbus-run-session -- flatpak run --command=flatpak-builder org.flatpak.Builder "$@"\n' > ~/.local/bin/flatpak-builder
+          printf '#!/bin/sh\nexec dbus-run-session -- flatpak run --env=FLATPAK_USER_DIR=$HOME/.local/share/flatpak --command=flatpak-builder org.flatpak.Builder "$@"\n' > ~/.local/bin/flatpak-builder
           chmod +x ~/.local/bin/flatpak-builder
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Import the signing key
