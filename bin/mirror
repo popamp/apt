@@ -11,6 +11,8 @@
 #   which HestiaCP keeps next to every web root and does not serve.
 # Needs: curl, gpgv, tar, sha256sum, flock.
 set -euo pipefail
+# sort and comm must agree on the order, whatever the caller's locale.
+export LC_ALL=C
 
 die() { echo "error: $*" >&2; exit 1; }
 
