@@ -120,6 +120,22 @@ Flatpak workflow: the published repository ─► flatpak-builder at the
 built.txt changed ─► downloads the tar ─► switches flatpak/
 ```
 
+Each build says where it came from. Its commit's subject names the
+popamp commit, its body the workflow run, and `flatpak info
+io.github.popamp.popamp` shows both to whoever installed it. GitHub
+attests (build provenance) that this workflow built both the Flatpak
+commit and `flatpak-repo.tar`. An OSTree commit's checksum is the sha256
+of its `.commit` object, which every installation keeps, so an installed
+copy can be checked as it is:
+
+```sh
+c=$(flatpak info --show-commit io.github.popamp.popamp)
+gh attestation verify ~/.local/share/flatpak/repo/objects/${c:0:2}/${c:2}.commit -R popamp/apt
+```
+
+The release "flatpak" lists the same: the popamp commit, the run, the
+Flatpak commit and the tar's sha256.
+
 A manual run takes a `ref` of popamp/popamp (a branch or a commit) to
 build in place of its latest release. A release that has no manifest is
 skipped. The release job of popamp starts the Flatpak workflow with the

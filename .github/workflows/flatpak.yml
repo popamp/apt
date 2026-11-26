@@ -7,6 +7,9 @@ name: Flatpak
 # `gh workflow run flatpak.yml -R popamp/apt --ref main`; the daily run
 # catches a start that got lost. A release already built is not built again.
 # Needs the secret APT_SIGNING_KEY, as the Index workflow.
+# Where each build came from can be checked: its commit message names the
+# popamp commit and this run (`flatpak info`), and GitHub attests that
+# this workflow built the commit and the tar (`gh attestation verify`).
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +21,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: flatpak
@@ -47,6 +52,7 @@ jobs:
             echo "::notice::$ref has no Flatpak manifest"
           else
             echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            echo "ref=$ref" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/checkout@v7
         if: steps.what.outputs.sha
@@ -85,24 +91,63 @@ jobs:
           if gh release download flatpak -p flatpak-repo.tar 2>/dev/null; then
             tar -xf flatpak-repo.tar && rm flatpak-repo.tar
           fi
-          bin/build-flatpak-repo popamp repo "$KEY"
+          bin/build-flatpak-repo popamp repo "$KEY" \
+            "popamp ${{ steps.what.outputs.ref }} (${{ steps.what.outputs.sha }})" \
+            "Built from https://github.com/$APP/commit/${{ steps.what.outputs.sha }} by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       # As a user would: from the repository, checked against the key.
+      # The commit's checksum is the sha256 of its .commit object, which
+      # every installation keeps: the attestation covers the copy a user has.
       - name: Install it from the repository
+        id: installed
         if: steps.what.outputs.sha
         run: |
           flatpak --user remote-add --gpg-import=site/popamp.gpg check "file://$PWD/repo"
           flatpak --user install -y --noninteractive check io.github.popamp.popamp//stable
           flatpak --user info io.github.popamp.popamp
+          commit=$(flatpak --user info --show-commit io.github.popamp.popamp)
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          tar -cf flatpak-repo.tar --exclude=repo/tmp --exclude=repo/state repo
+          { echo "$commit  io.github.popamp.popamp-stable-x86_64.commit"
+            sha256sum flatpak-repo.tar; } > subjects.txt
+          cat subjects.txt
+      - name: Attest where it was built
+        if: steps.what.outputs.sha
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: subjects.txt
       # built.txt goes up last: it is what the server and the next run
       # compare against, so a failed upload is repeated rather than skipped.
       - name: Publish it
         if: steps.what.outputs.sha
         env:
           GH_TOKEN: ${{ github.token }}
+          REF: ${{ steps.what.outputs.ref }}
+          SHA: ${{ steps.what.outputs.sha }}
+          COMMIT: ${{ steps.installed.outputs.commit }}
         run: |
-          tar -cf flatpak-repo.tar --exclude=repo/tmp --exclude=repo/state repo
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          cat > notes.md <<EOF
+          The signed Flatpak repository of https://apt.popamp.app/flatpak/, rebuilt by the Flatpak workflow. Not a release of anything.
+
+          | | |
+          |---|---|
+          | Built from | popamp $REF, [\`$SHA\`](https://github.com/$APP/commit/$SHA) |
+          | Build | $run |
+          | Flatpak commit | \`$COMMIT\` |
+          | flatpak-repo.tar, sha256 | \`$(sha256sum flatpak-repo.tar | cut -d' ' -f1)\` |
+
+          Check an installed Popamp: \`flatpak info io.github.popamp.popamp\` shows its commit and, as its subject, the popamp commit it was built from. GitHub attests that this workflow built that commit:
+
+          \`\`\`sh
+          c=\$(flatpak info --show-commit io.github.popamp.popamp)
+          gh attestation verify ~/.local/share/flatpak/repo/objects/\${c:0:2}/\${c:2}.commit -R popamp/apt
+          \`\`\`
+
+          (\`/var/lib/flatpak/repo\` for a system-wide installation.)
+          EOF
+          sed -i 's/^          //' notes.md
           gh release view flatpak >/dev/null 2>&1 \
-            || gh release create flatpak --title "Flatpak repository" --latest=false \
-                 --notes "The signed Flatpak repository of https://apt.popamp.app/flatpak/, rebuilt by the Flatpak workflow. Not a release of anything."
+            || gh release create flatpak --title "Flatpak repository" --latest=false --notes-file notes.md
+          gh release edit flatpak --notes-file notes.md
           gh release upload flatpak flatpak-repo.tar --clobber
           gh release upload flatpak built.txt --clobber

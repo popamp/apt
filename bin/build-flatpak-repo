@@ -4,8 +4,10 @@
 # summary, the appstream data. The commit before it stays, with a static
 # delta from it, so an update downloads only what changed; older ones go.
 #
-# Usage: bin/build-flatpak-repo <popamp checkout> <repo dir> <gpg key id>
+# Usage: bin/build-flatpak-repo <popamp checkout> <repo dir> <gpg key id> [subject [body]]
 #   The repo dir may hold the repository as published, or not exist yet.
+#   The subject and body go into the commit's message, which
+#   `flatpak info` shows to whoever installed it: where it was built from.
 #   The key, with its secret part, must be in gpg's keyring ($GNUPGHOME).
 # Needs: flatpak, flatpak-builder, and the remote "flathub" for the
 # runtime and the Rust SDK extension (installed for the user). The build
@@ -15,10 +17,13 @@ set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
 
-[ $# -eq 3 ] || die "usage: $0 <popamp checkout> <repo dir> <gpg key id>"
+[ $# -ge 3 ] && [ $# -le 5 ] || die "usage: $0 <popamp checkout> <repo dir> <gpg key id> [subject [body]]"
 src=$1
 repo=$2
 key=$3
+message=()
+[ -z "${4:-}" ] || message+=(--subject="$4")
+[ -z "${5:-}" ] || message+=(--body="$5")
 manifest=$src/packaging/flatpak/io.github.popamp.popamp.yml
 [ -f "$manifest" ] || die "$manifest: no Flatpak manifest in this checkout"
 sign=(--gpg-sign="$key" ${GNUPGHOME:+--gpg-homedir="$GNUPGHOME"})
@@ -37,7 +42,7 @@ for e in $extensions; do deps+=("$e//$version"); done
 flatpak --user install -y --noninteractive flathub "${deps[@]}"
 
 flatpak-builder --user --disable-rofiles-fuse \
-    --default-branch=stable --repo="$repo" \
+    --default-branch=stable --repo="$repo" "${message[@]}" \
     --state-dir="$build/state" "$build/app" "$manifest"
 flatpak build-sign "${sign[@]}" "$repo" io.github.popamp.popamp stable
 flatpak build-update-repo "${sign[@]}" --title=Popamp --default-branch=stable \
