@@ -8,7 +8,7 @@
 #
 # Usage: bin/mirror-flatpak <web root>
 #   Its state goes into <web root>/../private/flatpak-mirror.
-# Needs: curl, tar.
+# Needs: curl, tar, sha256sum.
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -33,6 +33,13 @@ if cmp -s "$run/built.txt" "$state/built.txt" && [ -d "$pub/flatpak" ]; then
 fi
 
 curl -fsSL --retry 3 -o "$run/repo.tar" "$base/flatpak-repo.tar"
+# GitHub may serve the previous tar for a few minutes after an upload:
+# a tar that is not the one built.txt names waits for the next run.
+want=$(cut -d' ' -f3 "$run/built.txt")
+if [ -n "$want" ] && [ "$(sha256sum < "$run/repo.tar" | cut -d' ' -f1)" != "$want" ]; then
+    echo "flatpak: the tar is not the one built.txt names yet; next run" >&2
+    exit 0
+fi
 # Only an OSTree repository; tar itself refuses absolute and ../ names.
 tar -tf "$run/repo.tar" | grep -qvE '^repo/((config|summary(\.sig|\.idx|\.idx\.sig)?)|((objects|refs|deltas|delta-indexes|summaries|extensions|state|tmp)(/.*)?))?$' \
     && die "unexpected files in the Flatpak repository"

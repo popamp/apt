@@ -149,5 +149,8 @@ jobs:
           gh release view flatpak >/dev/null 2>&1 \
             || gh release create flatpak --title "Flatpak repository" --latest=false --notes-file notes.md
           gh release edit flatpak --notes-file notes.md
+          # "<ref> <popamp commit> <sha256 of the tar>": the mirror takes a
+          # tar only when it matches, so a stale download is tried again.
+          echo "$REF $SHA $(sha256sum flatpak-repo.tar | cut -d' ' -f1)" > built.txt
           gh release upload flatpak flatpak-repo.tar --clobber
           gh release upload flatpak built.txt --clobber
